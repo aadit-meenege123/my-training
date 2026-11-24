@@ -472,6 +472,7 @@ function settingsView() {
   <div class="sec">Your data</div><div class="card" style="padding:4px 16px">
   <div class="opt" data-act="export">${ic('download', 22, 'ico')}<div class="grow">Back up data<div class="xs mute">Saves a JSON file with all workouts, weights and meals</div></div></div>
   <div class="opt" data-act="import">${ic('upload', 22, 'ico')}<div class="grow">Restore from backup</div></div>
+  <div class="opt" data-act="mergeseed">${ic('repeat', 22, 'ico')}<div class="grow">Add missing starter numbers &amp; notes</div></div>
   <div class="opt danger" data-act="reset">${ic('trash', 22, 'ico')}<div class="grow">Reset everything to the original numbers</div></div></div>
   <div class="sec">Install on iPhone</div><div class="card small" style="line-height:1.6">Open this page in <b>Safari</b> → tap the <b>Share</b> button → <b>Add to Home Screen</b>. It then opens full-screen like a native app and works offline. Everything is stored on your phone, so use <b>Back up data</b> now and then.</div>
   <div class="small faint" style="text-align:center;margin:18px">My Training · personal build</div></div>`;
@@ -833,6 +834,9 @@ document.addEventListener('click', e => {
     editnote() { const w = wk(d.w), ex = w.ex.find(x => x.id === d.e); noteSheet(w, ex); },
     delnote() { const ex = wk(d.w).ex.find(x => x.id === d.e); confirmSheet('Delete note?', 'This removes the note for ' + ex.name + '.', 'Delete', () => { ex.note = ''; save(); closeSheet(); renderTop(); }); },
     export() { exportData(); }, import() { importData(); },
+    mergeseed() { const done = n => { closeSheet(); render(); toast(n ? 'Added ' + n + ' missing items' : 'Already up to date'); };
+      if (typeof seedState === 'function') return done(mergeStarter(seedState()));
+      formSheet('Unlock code', [{ id: 'c', label: 'Your unlock code', ph: 'unlock code' }], 'Add', async () => { try { done(mergeStarter(await decryptSeed($('#f-c').value.trim().toLowerCase()))); } catch (e) { toast('That code did not work'); } }); },
     reset() { confirmSheet('Reset everything?', 'This erases everything you logged and restores the original numbers from the screen recording. Back up first if unsure.', 'Reset', () => { if (typeof seedState === 'function') { S = seedState(); syncPlan(); save(); closeSheet(); nav = []; $('#layers').innerHTML = ''; planDay = planDayFor(todayStr()); render(); toast('Reset to original data'); } else { localStorage.removeItem(KEY); location.reload(); } }); },
     restskip() { restT = null; renderOverlay(); },
     restadd() { if (restT) restT.left += 15; renderOverlay(); },
@@ -868,13 +872,26 @@ function renderLock(msg) {
   <button class="btn block" data-act="unlock">Unlock</button>
   <div class="small faint" style="margin-top:22px;text-align:center">Or restore a backup file: <button class="link" data-act="import">choose file</button></div></div>`;
 }
-async function unlockSeed(code) {
-  try {
+async function decryptSeed(code) {
     const b64 = x => Uint8Array.from(atob(x), c => c.charCodeAt(0)), enc = new TextEncoder();
     const km = await crypto.subtle.importKey('raw', enc.encode(code.trim().toLowerCase()), 'PBKDF2', false, ['deriveKey']);
     const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(SEED_ENC.salt), iterations: SEED_ENC.iter, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
     const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(SEED_ENC.iv) }, key, b64(SEED_ENC.ct));
-    S = JSON.parse(new TextDecoder().decode(pt)); save(); syncPlan(); planDay = planDayFor(todayStr()); selDay = todayStr(); render();
+    return JSON.parse(new TextDecoder().decode(pt));
+}
+// add starter-data history entries / notes that this device is missing, without touching anything you logged
+function mergeStarter(seed) {
+  let added = 0;
+  Object.values(seed.workouts || {}).forEach(sw => { const w = S.workouts && S.workouts[sw.id]; if (!w) return;
+    sw.ex.forEach(se => { const e = w.ex.find(x => x.id === se.id); if (!e) return; e.history = e.history || [];
+      se.history.forEach(h => { if (!e.history.some(x => x.date === h.date)) { e.history.push(h); added++; } });
+      e.history.sort((a, b) => b.date.localeCompare(a.date));
+      if (!e.note && se.note) { e.note = se.note; added++; } }); });
+  save(); return added;
+}
+async function unlockSeed(code) {
+  try {
+    S = await decryptSeed(code); save(); syncPlan(); planDay = planDayFor(todayStr()); selDay = todayStr(); render();
   } catch (e) { const m = $('#lockmsg'); if (m) m.textContent = 'That code did not work — check it and try again.'; }
 }
 
