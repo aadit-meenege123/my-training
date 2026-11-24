@@ -209,3 +209,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:30px;heigh
 .meal .mc{min-width:92px}
 
 .b{overflow-wrap:anywhere}
+
+.banner .bx{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.14);color:#fff;margin-right:-4px}
+.pbar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:10px}.pbar i{display:block;height:100%;border-radius:4px;background:var(--accent)}.pbar.done i{background:var(--green)}
+select.fi{appearance:none;-webkit-appearance:none}
+.chip.sm2{padding:6px 12px;font-size:13px}
+
+.btn[disabled]{pointer-events:none}
