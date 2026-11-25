@@ -499,7 +499,7 @@ function settingsView() {
   <div class="sec">Your data</div><div class="card" style="padding:4px 16px">
   <div class="opt" data-act="export">${ic('download', 22, 'ico')}<div class="grow">Back up data<div class="xs mute">Saves a JSON file with all workouts, weights and meals</div></div></div>
   <div class="opt" data-act="import">${ic('upload', 22, 'ico')}<div class="grow">Restore from backup</div></div>
-  <div class="opt" data-act="mergeseed">${ic('repeat', 22, 'ico')}<div class="grow">Add missing starter numbers &amp; notes</div></div>
+  <div class="opt" data-act="mergeseed">${ic('repeat', 22, 'ico')}<div class="grow">Restore missing starter workouts, numbers &amp; notes</div></div>
   <div class="opt danger" data-act="reset">${ic('trash', 22, 'ico')}<div class="grow">Reset everything to the original numbers</div></div></div>
   <div class="sec">Install on iPhone</div><div class="card small" style="line-height:1.6">Open this page in <b>Safari</b> → tap the <b>Share</b> button → <b>Add to Home Screen</b>. It then opens full-screen like a native app and works offline. Everything is stored on your phone, so use <b>Back up data</b> now and then.</div>
   <div class="small faint" style="text-align:center;margin:18px">My Training · personal build</div></div>`;
@@ -940,6 +940,8 @@ async function decryptSeed(code) {
 // add starter-data history entries / notes that this device is missing, without touching anything you logged
 function mergeStarter(seed) {
   let added = 0;
+  Object.values(seed.workouts || {}).forEach(sw => { if (!S.workouts[sw.id]) { S.workouts[sw.id] = JSON.parse(JSON.stringify(sw)); added++;   // restore a deleted starter workout + its scheduled days
+      (seed.schedule || []).filter(x => x.wid === sw.id && !S.schedule.some(y => y.id === x.id)).forEach(x => S.schedule.push(JSON.parse(JSON.stringify(x)))); } });
   Object.values(seed.workouts || {}).forEach(sw => { const w = S.workouts && S.workouts[sw.id]; if (!w) return;
     sw.ex.forEach(se => { const e = w.ex.find(x => x.id === se.id); if (!e) return; e.history = e.history || [];
       se.history.forEach(h => { if (!e.history.some(x => x.date === h.date)) { e.history.push(h); added++; } });
