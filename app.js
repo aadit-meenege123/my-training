@@ -103,6 +103,14 @@ function prevFor(ex, i) {
   if (!all[0]) return null;
   const r = all[0].sets.slice(); r.fromGym = hGym(all[0]); return r;
 }
+// average across every saved session (all gyms), per set number
+function avgFor(ex, i) {
+  const all = ex.history.filter(h => h.instId !== i.id && h.date <= i.date); if (all.length < 2) return null;
+  const n = Math.max(...all.map(h => h.sets.length)), out = [];
+  for (let k = 0; k < n; k++) { const ss = all.map(h => h.sets[k]).filter(Boolean); if (!ss.length) continue; out.push({ reps: ss.reduce((a, x) => a + num(x.reps), 0) / ss.length, lbs: ss.reduce((a, x) => a + num(x.lbs), 0) / ss.length }); }
+  return { n: all.length, sets: out };
+}
+const r1 = x => fnum(Math.round(x * 10) / 10);
 function exLog(i, ex) {
   i.log = i.log || {};
   const pv = prevFor(ex, i);
@@ -396,6 +404,8 @@ function exInfoView(p) {
   ${best ? `<div class="pr"><div><div class="xs mute">Personal Best To Beat</div><div class="b" style="font-size:16px">Estimated 1 rep max</div>${bd ? `<div class="xs mute">${niceDate(bd)}</div>` : ''}</div><b>${best.toFixed(2)} <small style="font-size:15px;font-weight:600">lbs</small></b></div>` : ''}
   ${pts.length > 1 ? `<div class="card"><b>Strength trend</b><div class="xs mute">Estimated 1RM per session</div>${lineChart(pts, { unit: 'lbs', h: 120 })}</div>` : ''}
   ${multi ? `<div class="row" style="gap:8px;flex-wrap:wrap;margin:14px 0 0"><button class="chip ${exGym === 'all' ? 'on' : ''}" data-act="exgym" data-g="all">All gyms</button>${S.gyms.map(g => `<button class="chip ${exGym === g.id ? 'on' : ''}" data-act="exgym" data-g="${g.id}">${esc(g.name)}</button>`).join('')}</div>` : ''}
+  ${multi ? (() => { const rows = S.gyms.map(g => { const hs = e.history.filter(h => hGym(h) === g.id).sort((a, b) => b.date.localeCompare(a.date)); if (!hs.length) return ''; const st = hs.flatMap(h => h.sets), l = hs[0], top = l.sets.reduce((a, x) => num(x.lbs) > num(a.lbs) ? x : a, l.sets[0]);
+      return `<div class="gr"><div class="grow"><b>${esc(g.name)}</b><div class="xs mute">${hs.length} session${hs.length === 1 ? '' : 's'}</div></div><div style="text-align:right"><div class="xs mute">Last (${niceDate(l.date)})</div><b>${top.reps} × ${top.lbs} lbs</b></div><div style="text-align:right;min-width:92px"><div class="xs mute">Average</div><b>${r1(st.reduce((a, x) => a + num(x.reps), 0) / st.length)} × ${r1(st.reduce((a, x) => a + num(x.lbs), 0) / st.length)} lbs</b></div></div>`; }).join(''); return rows ? `<div class="card"><b>By gym</b><div class="xs mute" style="margin-bottom:4px">Last session's top set and the average of every set</div>${rows}</div>` : ''; })() : ''}
   <div class="sec"><span class="grow">History</span></div>
   ${hist.length ? hist.map((h, k) => { const nx = hist.slice(k + 1).find(x => hGym(x) === hGym(h)); const top = Math.max(...h.sets.map(s => num(s.lbs))), ptop = nx ? Math.max(...nx.sets.map(s => num(s.lbs))) : null; const b = ptop == null ? '' : top > ptop ? `<span class="badge g">▲ +${fnum(top - ptop)} lb</span>` : top < ptop ? `<span class="badge r">▼ ${fnum(top - ptop)} lb</span>` : `<span class="badge y">= same weight</span>`;
     return `<div class="hist"><div class="hr"><span>${esc(h.w)}${multi ? ' · ' + esc(gymName(hGym(h))) : ''}</span><span class="mute" style="font-weight:500">${niceDate(h.date)}</span></div><div class="hs">${h.sets.map((s, j) => `<div><span style="width:44px">Set ${j + 1}</span><span>${s.reps} x ${s.lbs} lbs</span></div>`).join('')}</div><div style="margin-top:8px">${b}</div></div>`; }).join('') : `<div class="empty small">History appears here after you save this workout.</div>`}</div>`;
@@ -420,6 +430,7 @@ function exCard(i, w, e) {
    <button class="iconbtn" style="width:36px;color:var(--blue)" data-act="exinfo" data-w="${w.id}" data-e="${e.id}">${ic('note', 20)}</button><button class="iconbtn" style="width:36px;color:var(--blue)" data-act="exmenu" data-e="${e.id}">${ic('repeat', 20)}</button></div>
    ${e.note ? `<div class="note" data-act="exinfo" data-w="${w.id}" data-e="${e.id}"><span class="ell">${esc(e.note.split('\n')[0])}</span><span class="link" style="flex:none">See more</span></div>` : ''}
    ${pv && pv.fromGym ? `<div class="xs" style="margin:8px 2px 0;color:var(--mute)">No numbers at ${esc(gymName(gymOf(i)))} yet — showing ${esc(gymName(pv.fromGym))}</div>` : ''}
+   ${(() => { const a = avgFor(e, i); return a ? `<div class="avgln"><b>Avg</b> all gyms · ${a.n} sessions<br>${a.sets.map((x, k) => `<span>S${k + 1}: ${r1(x.reps)} × ${r1(x.lbs)} lbs</span>`).join('')}</div>` : ''; })()}
    <div class="rest"><span>${ic('timer', 16, '', 2)} &nbsp;Rest between each set</span><button class="pl" data-act="rest" data-e="${e.id}">${ic('clock', 15, '', 2.2)} ${e.rest}m</button></div>
    <div class="sh"><span>Set</span><span>Previous</span><span style="text-align:center">Reps</span><span style="text-align:center">Lbs</span><span></span></div>
    ${lg.map((s, k) => setRow(e, pv, lg, k)).join('')}
