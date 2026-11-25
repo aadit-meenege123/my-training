@@ -75,6 +75,7 @@ let S;
 try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
 if (!S || S.v !== 2) S = (typeof seedState === 'function') ? seedState() : null; // public build ships no personal data: S stays null until unlocked
 let MEAL_PLAN = null;
+const CORE = ['upper', 'lower'];   // your two main workouts can never be deleted
 function ensureGyms() { if (!S) return; if (!Array.isArray(S.gyms) || !S.gyms.length) S.gyms = [{ id: 'g1', name: 'My gym' }]; if (!S.gyms.some(g => g.id === S.gym)) S.gym = S.gyms[0].id; }
 const syncPlan = () => { ensureGyms(); MEAL_PLAN = (S && S.mealPlan) || (typeof MEAL_PLAN_SEED !== 'undefined' ? MEAL_PLAN_SEED : null); };
 syncPlan();
@@ -377,9 +378,10 @@ function activeBanner() {
 function previewView(p) {
   const i = p.id ? inst(p.id) : null, w = wk(i ? i.wid : p.wid);
   const ttl = i ? (i.date === todayStr() ? 'Today' : longDay(i.date)) : 'Workout';
-  return `<div class="top"><button class="iconbtn" data-act="back">${ic('x')}</button><div class="t">${ttl}</div><button class="iconbtn" data-act="${i ? 'move' : 'schedule'}" data-id="${i ? i.id : w.id}">${ic(i ? 'move' : 'plus')}</button><button class="iconbtn" data-act="wmenu2" data-w="${w.id}" aria-label="Workout options">${ic('more')}</button></div>
+  return `<div class="top"><button class="iconbtn" data-act="back">${ic('x')}</button><div class="t">${ttl}</div><button class="iconbtn" data-act="${i ? 'move' : 'schedule'}" data-id="${i ? i.id : w.id}">${ic(i ? 'move' : 'plus')}</button><button class="iconbtn" data-act="wmenu2" data-w="${w.id}" data-id="${i ? i.id : ''}" aria-label="Workout options">${ic('more')}</button></div>
   <div class="scroll"><div class="row" style="align-items:flex-start;margin-top:4px"><div class="dotc blue ${i && i.done ? 'on' : ''}" style="margin-top:6px">${i && i.done ? ic('check', 15, '', 3) : ''}</div><h1 class="grow" style="margin:0;font-size:27px;line-height:1.2;letter-spacing:-.4px">${esc(w.name)}</h1></div>
   <div class="row" style="margin-top:16px;color:var(--mute)">${ic('list', 18)}<span class="grow ink" style="color:var(--ink)">Regular</span>${i && !i.done ? `<button class="link" data-act="complete" data-id="${i.id}">Mark as Complete</button>` : ''}</div>
+  ${i && !i.done ? `<div class="row" style="gap:10px;margin-top:14px"><button class="btn soft grow" data-act="move" data-id="${i.id}">${ic('move', 18)} Change day</button><button class="btn soft grow" data-act="unschedule" data-id="${i.id}" style="color:var(--red)">${ic('trash', 18)} Remove this day</button></div>` : ''}
   ${i ? `<div class="row press" data-act="gympick" data-id="${i.id}" style="margin-top:14px;color:var(--mute)">${ic('target', 18)}<span class="grow" style="color:var(--ink)">Gym: <b>${esc(gymName(gymOf(i)))}</b></span><span class="link">Change</span></div>` : ''}
   <div class="row" style="margin-top:10px;color:var(--mute)">${ic('clock', 18)}<span style="color:var(--ink)">est. ${w.est}</span></div>
   <div class="row" style="margin-top:10px;color:var(--mute)">${ic('dumbbell', 18)}<span style="color:var(--ink)">${w.ex.length} Exercises</span></div>
@@ -526,6 +528,11 @@ function datePicker(title, sel, onPick, extra) {
   dpSheet = { y: parse(sel).getFullYear(), m: parse(sel).getMonth(), sel, onPick, mark: d => itemsOn(d).length };
   openSheet(sheetWrap(`<div id="dpwrap2">${calGrid(dpSheet.y, dpSheet.m, sel, dpSheet.mark)}</div>${extra || ''}`, title));
 }
+function removeFromDay(i) {
+  if (!i) return;
+  confirmSheet('Remove from ' + longDay(i.date) + '?', 'Only this day is removed. “' + wk(i.wid).name + '” itself stays in Workouts, and your saved numbers are untouched. You can schedule it on another day anytime.', 'Remove from this day', () => {
+    S.schedule = S.schedule.filter(x => x.id !== i.id); if (S.active && S.active.id === i.id) S.active = null; save(); closeSheet(); nav = []; $('#layers').innerHTML = ''; render(); toast('Removed from ' + lbl(i.date)); });
+}
 function moveSheet(i, mode) {
   mode = mode || 'move'; const t = todayStr();
   const chips = Array.from({ length: 7 }, (_, k) => { const d = addDays(t, k); return `<button class="chip ${d === i.date ? 'on' : ''}" data-act="moveto" data-id="${i.id}" data-d="${d}" data-mode="${mode}"><span>${k === 0 ? 'Today' : k === 1 ? 'Tomorrow' : DOW[parse(d).getDay()] + ' ' + parse(d).getDate()}</span></button>`; }).join('');
@@ -533,7 +540,7 @@ function moveSheet(i, mode) {
   openSheet(sheetWrap(`<div class="small mute" style="margin-bottom:10px">${esc(wk(i.wid).name)} · now on ${longDay(i.date)}</div>
    <div class="seg" style="margin-top:0"><button class="${mode === 'move' ? 'on' : ''}" data-act="movemode" data-id="${i.id}" data-v="move">Move</button><button class="${mode === 'copy' ? 'on' : ''}" data-act="movemode" data-id="${i.id}" data-v="copy">Copy to another day</button></div>
    <div class="hscroll" style="margin-bottom:8px">${chips}</div><div id="dpwrap2">${calGrid(dpSheet.y, dpSheet.m, i.date, dpSheet.mark)}</div>
-   <button class="opt danger" data-act="unschedule" data-id="${i.id}" style="width:100%;margin-top:8px">${ic('trash', 22, 'ico')}<span>Remove from calendar</span></button>`, mode === 'move' ? 'Move workout' : 'Copy workout'));
+   <button class="opt danger" data-act="unschedule" data-id="${i.id}" style="width:100%;margin-top:8px">${ic('trash', 22, 'ico')}<span>Remove from this day only</span></button>`, mode === 'move' ? 'Move workout' : 'Copy workout'));
 }
 function applyMove(i, d, mode) {
   if (mode === 'copy') { S.schedule.push({ id: uid(), wid: i.wid, date: d, done: false, log: {}, diff: null }); toast('Copied to ' + lbl(d)); }
@@ -770,6 +777,7 @@ document.addEventListener('click', e => {
     wmenu() { const i = inst(curNav().id); menu(wk(i.wid).name, [
       ...(!i.done ? [{ label: 'End workout…', icon: 'x', fn: () => endMenu(i.id) }] : []),
       { label: 'Move to another day', icon: 'move', fn: () => moveSheet(i) },
+      ...(!i.done ? [{ label: 'Remove from this day only', icon: 'trash', danger: true, fn: () => removeFromDay(i) }] : []),
       { label: 'Fill blanks from last time', icon: 'repeat', fn: () => { autofill(i); save(); renderTop(); toast('Filled from last time'); } },
       { label: 'Clear all entries', icon: 'trash', danger: true, fn: () => confirmSheet('Clear entries?', 'This empties every reps/lbs box for this workout.', 'Clear', () => { i.log = {}; save(); closeSheet(); renderTop(); }) }]); },
     instr() { instrOpen = !instrOpen; renderTop(); },
@@ -806,12 +814,13 @@ document.addEventListener('click', e => {
     eqsheet() { equipSheet(wk(d.w)); },
     weq() { const w = window._eqw; w.equip = w.equip || []; const k = w.equip.indexOf(d.v); k >= 0 ? w.equip.splice(k, 1) : w.equip.push(d.v); save(); $('#eqbody').innerHTML = window._eqbody(); if (curNav()) renderTop(); },
     weq_add() { const w = window._eqw, v = ($('#eq-new').value || '').trim(); if (!v) return toast('Type the equipment name'); S.equipment = S.equipment || []; if (!allEquip().some(e => e.toLowerCase() === v.toLowerCase())) S.equipment.push(v); const nm = allEquip().find(e => e.toLowerCase() === v.toLowerCase()); w.equip = w.equip || []; if (!w.equip.includes(nm)) w.equip.push(nm); save(); $('#eqbody').innerHTML = window._eqbody(); if (curNav()) renderTop(); },
-    wmenu2() { const w = wk(d.w); menu(w.name, [
+    wmenu2() { const w = wk(d.w), di = d.id ? inst(d.id) : null; menu(w.name, [
+      ...(di ? [{ label: 'Change day (move)', icon: 'move', fn: () => moveSheet(di) }, { label: 'Remove from ' + lbl(di.date) + ' only', icon: 'trash', danger: true, fn: () => removeFromDay(di) }] : []),
       { label: 'Add exercise', icon: 'plus', fn: () => insertExSheet(w, null, () => renderTop()) },
       { label: 'Edit name, time & instructions', icon: 'pencil', fn: () => formSheet('Workout details', [{ id: 'n', label: 'Name', value: w.name }, { id: 'e', label: 'Estimated time', value: w.est, ph: 'e.g. 1h 10m' }, { id: 'i', label: 'Instructions', type: 'textarea', value: w.instr }], 'Save', () => { const n = $('#f-n').value.trim(); if (!n) return toast('Name is required'); w.name = n; w.est = $('#f-e').value.trim() || w.est; w.instr = $('#f-i').value; save(); closeSheet(); renderTop(); renderBase(); }) },
       { label: 'Edit equipment', icon: 'sliders', fn: () => equipSheet(w) },
       { label: 'Schedule on a day', icon: 'calendar', fn: () => scheduleSheet(w.id) },
-      { label: 'Delete workout', icon: 'trash', danger: true, fn: () => confirmSheet('Delete workout?', 'Deletes “' + w.name + '” and removes it from your calendar. Saved lift history stays in your exercise pages only if you add those exercises elsewhere.', 'Delete', () => { delete S.workouts[w.id]; S.schedule = S.schedule.filter(x => x.wid !== w.id); if (S.active && !inst(S.active.id)) S.active = null; save(); closeSheet(); nav = []; $('#layers').innerHTML = ''; render(); toast('Workout deleted'); }) }]); },
+      ...(CORE.includes(w.id) ? [] : [{ label: 'Delete workout (all days)', icon: 'trash', danger: true, fn: () => confirmSheet('Delete workout?', 'Deletes “' + w.name + '” and removes it from your calendar. Saved lift history stays in your exercise pages only if you add those exercises elsewhere.', 'Delete', () => { delete S.workouts[w.id]; S.schedule = S.schedule.filter(x => x.wid !== w.id); if (S.active && !inst(S.active.id)) S.active = null; save(); closeSheet(); nav = []; $('#layers').innerHTML = ''; render(); toast('Workout deleted'); }) }])]); },
     newworkout() { formSheet('New workout', [{ id: 'n', label: 'Name', ph: 'e.g. Push Day' }, { id: 'e', label: 'Estimated time', value: '45 minutes' }, { id: 'i', label: 'Instructions (optional)', type: 'textarea', ph: 'Rep ranges, progression rules…' }], 'Create', () => { const n = $('#f-n').value.trim(); if (!n) return toast('Give the workout a name'); const id = 'w' + uid(); S.workouts[id] = { id, name: n, est: $('#f-e').value.trim() || '45 minutes', instr: $('#f-i').value.trim(), equip: [], ex: [], custom: true }; save(); closeSheet(); renderBase(); pushScreen('preview', { wid: id }); toast('Workout created — add your exercises'); }); },
     addgoal() { menu('Add a goal', [
       { label: 'Body weight goal', icon: 'scale', fn: () => goalForm('weight') },
@@ -835,7 +844,7 @@ document.addEventListener('click', e => {
     moveto() { buzz(); applyMove(inst(d.id), d.d, d.mode); },
     schedule() { scheduleSheet(d.id); },
     schedto() { S.schedule.push({ id: uid(), wid: d.w, date: d.d, done: false, log: {}, diff: null }); save(); selDay = d.d; closeSheet(); toast('Scheduled for ' + lbl(d.d)); render(); },
-    unschedule() { const i = inst(d.id); confirmSheet('Remove workout?', 'Removes it from ' + longDay(i.date) + '. Saved history stays in the exercise pages.', 'Remove', () => { S.schedule = S.schedule.filter(x => x.id !== i.id); if (S.active && S.active.id === i.id) S.active = null; save(); closeSheet(); nav = []; $('#layers').innerHTML = ''; render(); }); },
+    unschedule() { removeFromDay(inst(d.id)); },
     dpnav() { const o = dpSheet || dp; if (!o) return; o.m += +d.n; if (o.m > 11) { o.m = 0; o.y++; } if (o.m < 0) { o.m = 11; o.y--; } const w = $('#dpwrap2') || $('#dpwrap'); w.innerHTML = calGrid(o.y, o.m, o.sel || selDay, o.mark || (x => itemsOn(x).length)); },
     dppick() { if (dpSheet) { const f = dpSheet.onPick; f && f(d.d); } else { selDay = d.d; renderBase(); } },
     weightlog() { weightQuick(d.d); },
