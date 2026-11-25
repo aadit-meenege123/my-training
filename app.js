@@ -256,7 +256,7 @@ function workoutCard(i) {
   const w = wk(i.wid); const n = w.ex.filter(e => filled(i.log && i.log[e.id]).length).length;
   const prog = S.active && S.active.id === i.id;
   return `<div class="card press wcard" data-act="open" data-id="${i.id}"><div class="row"><div class="dotc blue ${i.done ? 'on' : ''} ${prog ? 'prog' : ''}">${i.done ? ic('check', 15, '', 3) : ''}</div><div class="grow name">${esc(w.name)}</div>
-    <button class="iconbtn" data-act="move" data-id="${i.id}" aria-label="Move to another day">${ic('move', 20)}</button><span class="chev">${ic('chevr', 20)}</span></div>
+    <button class="iconbtn" data-act="move" data-id="${i.id}" aria-label="Move to another day">${ic('move', 20)}</button>${i.done ? '' : `<button class="iconbtn" data-act="unschedule" data-id="${i.id}" aria-label="Remove from this day" style="color:var(--red)">${ic('x', 20, '', 2.4)}</button>`}<span class="chev">${ic('chevr', 20)}</span></div>
     <div class="meta">${i.done ? `Completed · ${n}/${w.ex.length} exercises logged${i.duration ? ' · ' + Math.round(i.duration / 60000) + ' min' : ''}` : prog ? 'In progress — tap to resume' : 'Complete your scheduled workout.'}</div></div>`;
 }
 function weightCard(d) {
