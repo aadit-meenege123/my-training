@@ -75,7 +75,8 @@ let S;
 try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
 if (!S || S.v !== 2) S = (typeof seedState === 'function') ? seedState() : null; // public build ships no personal data: S stays null until unlocked
 let MEAL_PLAN = null;
-const syncPlan = () => { MEAL_PLAN = (S && S.mealPlan) || (typeof MEAL_PLAN_SEED !== 'undefined' ? MEAL_PLAN_SEED : null); };
+function ensureGyms() { if (!S) return; if (!Array.isArray(S.gyms) || !S.gyms.length) S.gyms = [{ id: 'g1', name: 'My gym' }]; if (!S.gyms.some(g => g.id === S.gym)) S.gym = S.gyms[0].id; }
+const syncPlan = () => { ensureGyms(); MEAL_PLAN = (S && S.mealPlan) || (typeof MEAL_PLAN_SEED !== 'undefined' ? MEAL_PLAN_SEED : null); };
 syncPlan();
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { } };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { }
@@ -92,9 +93,15 @@ if (!planDay && S) planDay = planDayFor(todayStr());
 
 /* ---- workout data model ---- */
 // previous sets for an exercise relative to a session: latest entry from another session on/before this session's date
+const gymName = id => (S.gyms.find(g => g.id === id) || S.gyms[0]).name;
+const gymOf = i => (i && i.gym && S.gyms.some(g => g.id === i.gym)) ? i.gym : (i && i.done ? S.gyms[0].id : S.gym);
+const hGym = h => (h.gym && S.gyms.some(g => g.id === h.gym)) ? h.gym : S.gyms[0].id;   // old entries (no gym tag) belong to your first gym
+// previous sets are per-gym: weights differ between gyms. If this gym has no history yet, fall back to the latest elsewhere (flagged .fromGym)
 function prevFor(ex, i) {
-  const e = ex.history.filter(h => h.instId !== i.id && h.date <= i.date).sort((a, b) => b.date.localeCompare(a.date))[0];
-  return e ? e.sets : null;
+  const g = gymOf(i), all = ex.history.filter(h => h.instId !== i.id && h.date <= i.date).sort((a, b) => b.date.localeCompare(a.date));
+  const e = all.find(h => hGym(h) === g); if (e) return e.sets;
+  if (!all[0]) return null;
+  const r = all[0].sets.slice(); r.fromGym = hGym(all[0]); return r;
 }
 function exLog(i, ex) {
   i.log = i.log || {};
@@ -105,6 +112,7 @@ function exLog(i, ex) {
   return lg;
 }
 function deltaOf(pv, k, cur) {
+  if (pv && pv.fromGym) return null;   // other gym's numbers aren't comparable
   const p = pv && (pv[k] || pv[pv.length - 1]); const r = num(cur.reps), l = num(cur.lbs);
   if (!p || isNaN(r) || isNaN(l)) return null;
   const pr = num(p.reps), pl = num(p.lbs), dl = l - pl, dr = r - pr;
@@ -122,11 +130,11 @@ function commitWorkout(i, durationMs) {
   const w = wk(i.wid); const sum = { ex: [], up: 0, down: 0, same: 0, prs: 0, vol: 0, pvol: 0, logged: 0 };
   w.ex.forEach(ex => {
     const sets = filled(i.log && i.log[ex.id]).map(s => ({ reps: String(num(s.reps)), lbs: String(num(s.lbs)) }));
-    const pv = prevFor(ex, i);
-    const priorBest = (() => { let b = 0; ex.history.filter(h => h.instId !== i.id).forEach(h => h.sets.forEach(s => b = Math.max(b, est1rm(num(s.reps), num(s.lbs))))); return b; })();
+    const pv0 = prevFor(ex, i), pv = pv0 && pv0.fromGym ? null : pv0, gid = gymOf(i);
+    const priorBest = (() => { let b = 0; ex.history.filter(h => h.instId !== i.id && hGym(h) === gid).forEach(h => h.sets.forEach(s => b = Math.max(b, est1rm(num(s.reps), num(s.lbs))))); return b; })();
     ex.history = ex.history.filter(h => h.instId !== i.id);
     if (sets.length) {
-      ex.history.push({ date: i.date, instId: i.id, w: w.name, sets });
+      ex.history.push({ date: i.date, instId: i.id, w: w.name, sets, gym: gid });
       ex.history.sort((a, b) => b.date.localeCompare(a.date));
       sum.logged++;
       const ds = sets.map((s, k) => deltaOf(pv, k, s)).filter(Boolean);
@@ -139,6 +147,7 @@ function commitWorkout(i, durationMs) {
       sum.ex.push({ name: ex.name, sets, dir: pv ? dir : 'new', pr, pv });
     }
   });
+  i.gym = gymOf(i); S.gym = i.gym;
   i.done = true; i.doneAt = Date.now(); if (durationMs) i.duration = durationMs;
   if (S.active && S.active.id === i.id) S.active = null;
   save();
@@ -363,6 +372,7 @@ function previewView(p) {
   return `<div class="top"><button class="iconbtn" data-act="back">${ic('x')}</button><div class="t">${ttl}</div><button class="iconbtn" data-act="${i ? 'move' : 'schedule'}" data-id="${i ? i.id : w.id}">${ic(i ? 'move' : 'plus')}</button><button class="iconbtn" data-act="wmenu2" data-w="${w.id}" aria-label="Workout options">${ic('more')}</button></div>
   <div class="scroll"><div class="row" style="align-items:flex-start;margin-top:4px"><div class="dotc blue ${i && i.done ? 'on' : ''}" style="margin-top:6px">${i && i.done ? ic('check', 15, '', 3) : ''}</div><h1 class="grow" style="margin:0;font-size:27px;line-height:1.2;letter-spacing:-.4px">${esc(w.name)}</h1></div>
   <div class="row" style="margin-top:16px;color:var(--mute)">${ic('list', 18)}<span class="grow ink" style="color:var(--ink)">Regular</span>${i && !i.done ? `<button class="link" data-act="complete" data-id="${i.id}">Mark as Complete</button>` : ''}</div>
+  ${i ? `<div class="row press" data-act="gympick" data-id="${i.id}" style="margin-top:14px;color:var(--mute)">${ic('target', 18)}<span class="grow" style="color:var(--ink)">Gym: <b>${esc(gymName(gymOf(i)))}</b></span><span class="link">Change</span></div>` : ''}
   <div class="row" style="margin-top:10px;color:var(--mute)">${ic('clock', 18)}<span style="color:var(--ink)">est. ${w.est}</span></div>
   <div class="row" style="margin-top:10px;color:var(--mute)">${ic('dumbbell', 18)}<span style="color:var(--ink)">${w.ex.length} Exercises</span></div>
   <div class="sec" style="margin-top:22px">Equipment</div><div class="row" style="gap:12px;flex-wrap:wrap">${!equipOf(w).length ? '<button class="link" data-act="eqsheet" data-w="' + w.id + '">+ Add equipment</button>' : ''}${equipOf(w).map(e => `<div style="text-align:center;font-size:12px;font-weight:600"><div class="thumb" style="background:var(--card);color:var(--ink);box-shadow:var(--shadow);width:68px;height:56px;margin-bottom:6px">${ic(EQ[e] || 'dumbbell', 24)}</div>${e}</div>`).join('')}</div>
@@ -374,7 +384,9 @@ function previewView(p) {
   <div class="sticky"><button class="btn" ${w.ex.length ? '' : 'disabled style="opacity:.5"'} data-act="start" data-id="${i ? i.id : ''}" data-w="${w.id}" style="min-width:210px">${i && i.done ? 'Edit Log' : S.active && i && S.active.id === i.id ? 'Resume' : 'Start Now'}</button></div>`;
 }
 function exInfoView(p) {
-  const w = wk(p.w), e = w.ex.find(x => x.id === p.e), hist = e.history.slice().sort((a, b) => b.date.localeCompare(a.date)); const best = bestOf(e);
+  const w = wk(p.w), e = w.ex.find(x => x.id === p.e); if (exGym !== 'all' && !S.gyms.some(g => g.id === exGym)) exGym = 'all';
+  const hist = e.history.filter(h => exGym === 'all' || hGym(h) === exGym).sort((a, b) => b.date.localeCompare(a.date)); const multi = S.gyms.length > 1;
+  const best = (() => { let b = 0; hist.forEach(h => h.sets.forEach(s => b = Math.max(b, est1rm(num(s.reps), num(s.lbs))))); return b; })();
   const pts = hist.slice().reverse().map(h => ({ x: h.date, y: Math.max(...h.sets.map(s => est1rm(num(s.reps), num(s.lbs)))) })).filter(p => p.y > 0);
   const bd = (() => { let b = 0, d = ''; hist.forEach(h => h.sets.forEach(s => { const v = est1rm(num(s.reps), num(s.lbs)); if (v > b) { b = v; d = h.date; } })); return d; })();
   return `<div class="top"><button class="iconbtn" data-act="back">${ic('chevl')}</button><div class="t"></div><button class="iconbtn" data-act="editnote" data-w="${w.id}" data-e="${e.id}">${ic('pencil')}</button></div>
@@ -383,9 +395,10 @@ function exInfoView(p) {
   <div class="card"><div class="row"><b class="grow">Note</b><button class="iconbtn" data-act="editnote" data-w="${w.id}" data-e="${e.id}">${ic('pencil', 18)}</button><button class="iconbtn" data-act="delnote" data-w="${w.id}" data-e="${e.id}">${ic('trash', 18)}</button></div><div style="margin-top:4px;white-space:pre-line;font-size:15px;line-height:1.5">${e.note ? esc(e.note) : '<span class="mute">No note yet — tap the pencil to add how it felt, machine settings, form cues…</span>'}</div></div>
   ${best ? `<div class="pr"><div><div class="xs mute">Personal Best To Beat</div><div class="b" style="font-size:16px">Estimated 1 rep max</div>${bd ? `<div class="xs mute">${niceDate(bd)}</div>` : ''}</div><b>${best.toFixed(2)} <small style="font-size:15px;font-weight:600">lbs</small></b></div>` : ''}
   ${pts.length > 1 ? `<div class="card"><b>Strength trend</b><div class="xs mute">Estimated 1RM per session</div>${lineChart(pts, { unit: 'lbs', h: 120 })}</div>` : ''}
+  ${multi ? `<div class="row" style="gap:8px;flex-wrap:wrap;margin:14px 0 0"><button class="chip ${exGym === 'all' ? 'on' : ''}" data-act="exgym" data-g="all">All gyms</button>${S.gyms.map(g => `<button class="chip ${exGym === g.id ? 'on' : ''}" data-act="exgym" data-g="${g.id}">${esc(g.name)}</button>`).join('')}</div>` : ''}
   <div class="sec"><span class="grow">History</span></div>
-  ${hist.length ? hist.map((h, k) => { const nx = hist[k + 1]; const top = Math.max(...h.sets.map(s => num(s.lbs))), ptop = nx ? Math.max(...nx.sets.map(s => num(s.lbs))) : null; const b = ptop == null ? '' : top > ptop ? `<span class="badge g">▲ +${fnum(top - ptop)} lb</span>` : top < ptop ? `<span class="badge r">▼ ${fnum(top - ptop)} lb</span>` : `<span class="badge y">= same weight</span>`;
-    return `<div class="hist"><div class="hr"><span>${esc(h.w)}</span><span class="mute" style="font-weight:500">${niceDate(h.date)}</span></div><div class="hs">${h.sets.map((s, j) => `<div><span style="width:44px">Set ${j + 1}</span><span>${s.reps} x ${s.lbs} lbs</span></div>`).join('')}</div><div style="margin-top:8px">${b}</div></div>`; }).join('') : `<div class="empty small">History appears here after you save this workout.</div>`}</div>`;
+  ${hist.length ? hist.map((h, k) => { const nx = hist.slice(k + 1).find(x => hGym(x) === hGym(h)); const top = Math.max(...h.sets.map(s => num(s.lbs))), ptop = nx ? Math.max(...nx.sets.map(s => num(s.lbs))) : null; const b = ptop == null ? '' : top > ptop ? `<span class="badge g">▲ +${fnum(top - ptop)} lb</span>` : top < ptop ? `<span class="badge r">▼ ${fnum(top - ptop)} lb</span>` : `<span class="badge y">= same weight</span>`;
+    return `<div class="hist"><div class="hr"><span>${esc(h.w)}${multi ? ' · ' + esc(gymName(hGym(h))) : ''}</span><span class="mute" style="font-weight:500">${niceDate(h.date)}</span></div><div class="hs">${h.sets.map((s, j) => `<div><span style="width:44px">Set ${j + 1}</span><span>${s.reps} x ${s.lbs} lbs</span></div>`).join('')}</div><div style="margin-top:8px">${b}</div></div>`; }).join('') : `<div class="empty small">History appears here after you save this workout.</div>`}</div>`;
 }
 function loggerView(p) {
   const i = inst(p.id), w = wk(i.wid); const ins = w.instr.split('\n');
@@ -393,6 +406,7 @@ function loggerView(p) {
   return `<div class="top" id="lt"><button class="iconbtn" data-act="minimize" aria-label="Minimize">${ic('chevd', 26)}</button><div class="t" id="elapsed">${prog ? clock(Date.now() - prog) : (i.done ? 'Editing log' : '')}</div>
    <button class="iconbtn" data-act="clockinfo">${ic('timer')}</button><button class="iconbtn" data-act="wnote">${ic('msg')}</button><button class="iconbtn" data-act="wmenu">${ic('more')}</button><button class="chip on" data-act="finish" style="margin-left:2px">Save</button></div>
   <div class="scroll" id="sc-log"><h1 style="font-size:27px;line-height:1.2;margin:6px 2px 10px;letter-spacing:-.4px">${esc(w.name)}</h1>
+  <button class="chip" data-act="gympick" data-id="${i.id}" style="margin:0 2px 10px">📍 ${esc(gymName(gymOf(i)))} ▾</button>
   <div style="font-size:14.5px;line-height:1.5;color:var(--mute);margin:0 2px;white-space:pre-line">${esc(instrOpen ? w.instr : ins.slice(0, 4).join('\n'))}${instrOpen ? '' : '…'} <button class="link" data-act="instr" style="font-size:14.5px">${instrOpen ? 'See less' : 'See more'}</button></div>
   ${i.note ? `<div class="note" style="margin:10px 0"><span><b>Workout note</b><br>${esc(i.note)}</span></div>` : ''}
   <div class="row card" style="margin:14px 0 4px;padding:14px 16px"><div class="grow b">Auto fill stats <span class="faint" style="font-weight:500;font-size:13px">· fills blanks from last time</span></div><div class="tog ${S.autofill ? 'on' : ''}" data-act="autofill"></div></div>
@@ -405,6 +419,7 @@ function exCard(i, w, e) {
   return `<div class="ex" id="ex-${e.id}"><div class="row" style="align-items:flex-start">${thumb(e.kind, 50)}<div class="grow" data-act="exinfo" data-w="${w.id}" data-e="${e.id}"><div class="exn">${esc(e.name)}</div><div class="exd">${esc(e.desc)}</div></div>
    <button class="iconbtn" style="width:36px;color:var(--blue)" data-act="exinfo" data-w="${w.id}" data-e="${e.id}">${ic('note', 20)}</button><button class="iconbtn" style="width:36px;color:var(--blue)" data-act="exmenu" data-e="${e.id}">${ic('repeat', 20)}</button></div>
    ${e.note ? `<div class="note" data-act="exinfo" data-w="${w.id}" data-e="${e.id}"><span class="ell">${esc(e.note.split('\n')[0])}</span><span class="link" style="flex:none">See more</span></div>` : ''}
+   ${pv && pv.fromGym ? `<div class="xs" style="margin:8px 2px 0;color:var(--mute)">No numbers at ${esc(gymName(gymOf(i)))} yet — showing ${esc(gymName(pv.fromGym))}</div>` : ''}
    <div class="rest"><span>${ic('timer', 16, '', 2)} &nbsp;Rest between each set</span><button class="pl" data-act="rest" data-e="${e.id}">${ic('clock', 15, '', 2.2)} ${e.rest}m</button></div>
    <div class="sh"><span>Set</span><span>Previous</span><span style="text-align:center">Reps</span><span style="text-align:center">Lbs</span><span></span></div>
    ${lg.map((s, k) => setRow(e, pv, lg, k)).join('')}
@@ -469,6 +484,7 @@ function nutGraphView() {
 function settingsView() {
   return `<div class="top"><button class="iconbtn" data-act="back">${ic('chevl')}</button><div class="t">Settings</div><div class="sp" style="flex:0 0 40px"></div></div><div class="scroll">
   <div class="card" style="padding:4px 16px"><div class="opt" data-act="planstart">${ic('calendar', 22, 'ico')}<div class="grow">Meal plan Day 1 starts<div class="xs mute">${niceDate(S.plan.start)} — Day ${planDayFor(todayStr())} is today</div></div>${ic('chevr', 18, 'chev')}</div></div>
+  <div class="sec">Gyms</div><div class="card" style="padding:4px 16px"><div class="opt" data-act="gymspage">${ic('target', 22, 'ico')}<div class="grow">Manage gyms<div class="xs mute">${S.gyms.map(g => esc(g.name)).join(' · ')} — each gym keeps its own previous weights</div></div>${ic('chevr', 18, 'chev')}</div></div>
   <div class="sec">Your data</div><div class="card" style="padding:4px 16px">
   <div class="opt" data-act="export">${ic('download', 22, 'ico')}<div class="grow">Back up data<div class="xs mute">Saves a JSON file with all workouts, weights and meals</div></div></div>
   <div class="opt" data-act="import">${ic('upload', 22, 'ico')}<div class="grow">Restore from backup</div></div>
@@ -477,7 +493,7 @@ function settingsView() {
   <div class="sec">Install on iPhone</div><div class="card small" style="line-height:1.6">Open this page in <b>Safari</b> → tap the <b>Share</b> button → <b>Add to Home Screen</b>. It then opens full-screen like a native app and works offline. Everything is stored on your phone, so use <b>Back up data</b> now and then.</div>
   <div class="small faint" style="text-align:center;margin:18px">My Training · personal build</div></div>`;
 }
-const viewOf = n => ({ preview: previewView, exinfo: exInfoView, logger: loggerView, diff: diffView, summary: summaryView, metric: metricView, nutgraph: nutGraphView, settings: settingsView })[n.screen](n);
+const viewOf = n => ({ gyms: gymsView, preview: previewView, exinfo: exInfoView, logger: loggerView, diff: diffView, summary: summaryView, metric: metricView, nutgraph: nutGraphView, settings: settingsView })[n.screen](n);
 
 /* ====================== sheets ====================== */
 function openSheet(html, cb) { sheet = html; sheetCb = cb || null; renderOverlay(); }
@@ -653,6 +669,7 @@ setInterval(() => {
 /* ====================== actions ====================== */
 function startWorkout(id) {
   const i = inst(id); if (!i) return;
+  if (!i.gym) i.gym = gymOf(i);
   if (!i.done && (!S.active || S.active.id !== id)) S.active = { id, startedAt: Date.now() };  // editing a finished workout never creates an "in progress" banner
   if (S.autofill) autofill(i);
   save(); nav = nav.filter(n => n.screen !== 'preview'); layersReset(); pushScreenReplace('logger', { id });
@@ -660,7 +677,7 @@ function startWorkout(id) {
 function pushScreenReplace(screen, p) { // swap whole stack with a single logger screen without flicker
   const L = $('#layers'); L.innerHTML = ''; nav = []; pushScreen(screen, p); renderBase();
 }
-function autofill(i) { wk(i.wid).ex.forEach(ex => { const lg = exLog(i, ex), pv = prevFor(ex, i); lg.forEach((s, k) => { if (!s.reps && !s.lbs && pv && pv[k]) { s.reps = String(pv[k].reps); s.lbs = String(pv[k].lbs); } }); }); }
+function autofill(i) { wk(i.wid).ex.forEach(ex => { const lg = exLog(i, ex), pv = prevFor(ex, i); lg.forEach((s, k) => { if (!s.reps && !s.lbs && pv && !pv.fromGym && pv[k]) { s.reps = String(pv[k].reps); s.lbs = String(pv[k].lbs); } }); }); }
 function minimize() { save(); const L = $('#layers'); nav = []; const top = [...L.children].pop(); if (top) { top.className = 'layer down leave'; setTimeout(() => { L.innerHTML = ''; }, 280); } renderBase(); }
 function finishWorkout() {
   if (!curNav() || curNav().screen !== 'logger') return; // ignore double taps
@@ -834,6 +851,13 @@ document.addEventListener('click', e => {
     editnote() { const w = wk(d.w), ex = w.ex.find(x => x.id === d.e); noteSheet(w, ex); },
     delnote() { const ex = wk(d.w).ex.find(x => x.id === d.e); confirmSheet('Delete note?', 'This removes the note for ' + ex.name + '.', 'Delete', () => { ex.note = ''; save(); closeSheet(); renderTop(); }); },
     export() { exportData(); }, import() { importData(); },
+    gympick() { gymSheet(d.id); },
+    gymspage() { pushScreen('gyms'); },
+    gymadd() { addGymSheet(null); },
+    gymrename() { const g = S.gyms.find(x => x.id === d.g); formSheet('Rename gym', [{ id: 'n', label: 'Gym name', value: g.name }], 'Save', () => { const n = $('#f-n').value.trim(); if (!n) return; g.name = n; save(); closeSheet(); renderTop(); toast('Renamed'); }); },
+    gymdel() { const g = S.gyms.find(x => x.id === d.g); if (S.gyms.length < 2) return toast('You need at least one gym'); const to = S.gyms.find(x => x.id !== g.id);
+      confirmSheet('Delete ' + g.name + '?', 'Numbers logged there will move to ' + to.name + '.', 'Delete', () => { Object.values(S.workouts).forEach(w => w.ex.forEach(e => e.history.forEach(h => { if (h.gym === g.id) h.gym = to.id; }))); S.schedule.forEach(x => { if (x.gym === g.id) x.gym = to.id; }); S.gyms = S.gyms.filter(x => x.id !== g.id); ensureGyms(); save(); closeSheet(); renderTop(); toast('Gym deleted'); }); },
+    exgym() { exGym = d.g; renderTop(); },
     mergeseed() { const done = n => { closeSheet(); render(); toast(n ? 'Added ' + n + ' missing items' : 'Already up to date'); };
       if (typeof seedState === 'function') return done(mergeStarter(seedState()));
       formSheet('Unlock code', [{ id: 'c', label: 'Your unlock code', ph: 'unlock code' }], 'Add', async () => { try { done(mergeStarter(await decryptSeed($('#f-c').value.trim().toLowerCase()))); } catch (e) { toast('That code did not work'); } }); },
@@ -849,6 +873,29 @@ document.addEventListener('click', e => {
 });
 window.addEventListener('error', e => { (window.__errs = window.__errs || []).push(e.message); });
 window.addEventListener('unhandledrejection', e => { (window.__errs = window.__errs || []).push(String(e.reason)); });
+let exGym = 'all';
+function gymSheet(id) {
+  const i = inst(id); if (!i) return; const cur = gymOf(i);
+  menu('Which gym are you at?', [...S.gyms.map(g => ({ label: (g.id === cur ? '✓  ' : '') + g.name, icon: 'dumbbell', fn: () => setGym(id, g.id) })), { label: 'Add a new gym', icon: 'plus', fn: () => addGymSheet(id) }]);
+}
+function setGym(id, gid) {
+  const i = inst(id); if (!i) return; i.gym = gid; S.gym = gid;
+  if (i.done) Object.values(S.workouts).forEach(w => w.ex.forEach(e => e.history.forEach(h => { if (h.instId === i.id) h.gym = gid; })));
+  save(); closeSheet(); renderTop(); renderBase(); toast('Gym: ' + gymName(gid));
+}
+function addGymSheet(id) {
+  formSheet('New gym', [{ id: 'n', label: 'Gym name', ph: 'e.g. Crunch, 24 Hour Fitness, Lifetime' }], 'Add', () => {
+    const n = $('#f-n').value.trim(); if (!n) return;
+    let g = S.gyms.find(x => x.name.toLowerCase() === n.toLowerCase()); if (!g) { g = { id: 'g' + uid(), name: n }; S.gyms.push(g); }
+    if (id) setGym(id, g.id); else { save(); closeSheet(); renderTop(); toast('Added ' + g.name); }
+  });
+}
+function gymsView() {
+  return `<div class="top"><button class="iconbtn" data-act="back">${ic('chevl')}</button><div class="t">Gyms</div><div class="sp" style="flex:0 0 40px"></div></div><div class="scroll">
+  <div class="small mute" style="margin:0 4px 6px;line-height:1.5">Weights differ between gyms, so each gym keeps its own “Previous” numbers, history and personal bests. Pick the gym at the top of any workout.</div>
+  ${S.gyms.map(g => { const n = new Set(S.schedule.filter(x => x.done && gymOf(x) === g.id).map(x => x.id)).size; return `<div class="card row" style="padding:14px 16px"><div class="thumb" style="width:44px;height:44px;border-radius:12px">${ic('dumbbell', 22)}</div><div class="grow"><b>${esc(g.name)}</b>${g.id === S.gym ? ' <span class="badge y">last used</span>' : ''}<div class="xs mute">${n} saved workout${n === 1 ? '' : 's'}</div></div><button class="iconbtn" data-act="gymrename" data-g="${g.id}" aria-label="Rename">${ic('pencil', 20)}</button>${S.gyms.length > 1 ? `<button class="iconbtn" data-act="gymdel" data-g="${g.id}" aria-label="Delete">${ic('trash', 20)}</button>` : ''}</div>`; }).join('')}
+  <button class="add" data-act="gymadd" style="margin:14px auto">${ic('plus', 18, '', 2.4)} Add gym</button></div>`;
+}
 function noteSheet(w, ex) { formSheet(ex.name, [{ id: 'n', label: 'Note', type: 'textarea', value: ex.note, ph: 'Machine settings, form cues, how it felt…' }], 'Save', () => { ex.note = $('#f-n').value.trim(); save(); closeSheet(); if (curNav()) renderTop(); }); }
 
 /* ---- gestures: swipe from left edge = back, drag down on logger header = minimize ---- */
